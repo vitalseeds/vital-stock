@@ -36,11 +36,6 @@ function vs_auto_apply_wholesale_coupon()
 		if (!in_array($coupon_code, $applied_coupons)) {
 			WC()->cart->apply_coupon($coupon_code);
 		}
-	} else {
-		// Remove coupon if user doesn't have BACS role but coupon is applied
-		if (in_array($coupon_code, $applied_coupons)) {
-			WC()->cart->remove_coupon($coupon_code);
-		}
 	}
 }
 add_action('woocommerce_before_cart', 'vs_auto_apply_wholesale_coupon');
@@ -73,9 +68,10 @@ add_filter('woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal', 
  *
  * Replaces the standard WooCommerce minimum spend error with a friendlier message
  * that shows how much more needs to be spent to activate the discount.
+ * Only customizes the message if the user is actually eligible to use the coupon.
  *
  * Changes "The minimum spend for coupon 'wholesale' is £50" to:
- * "Wholesale coupon is applied (minimum spend £50.00) - spend £15.00 more for discount"
+ * "Wholesale coupon applied - spend £15.00 more for discount"
  *
  * @param string $error_message The original error message
  * @param int $error_code The error code
@@ -89,6 +85,13 @@ function vs_customize_wholesale_minimum_spend_message($error_message, $error_cod
 		return $error_message;
 	}
 
+	// Check if user can actually use the wholesale coupon
+	if (!is_user_logged_in()) {
+		return $error_message;
+	}
+
+	$is_bacs_user = function_exists('wc_current_user_has_role') && wc_current_user_has_role('bacs');
+
 	$minimum_spend = $coupon->get_minimum_amount();
 	$cart_total = WC()->cart->get_displayed_subtotal();
 
@@ -98,8 +101,6 @@ function vs_customize_wholesale_minimum_spend_message($error_message, $error_cod
 	if ($remaining > 0) {
 		return sprintf(
 			__('Wholesale coupon applied - spend %s more for discount', 'vital-stock'),
-			// __('Wholesale coupon is applied (minimum spend %s) - spend %s more for discount', 'vital-stock'),
-			wc_price($minimum_spend),
 			wc_price($remaining)
 		);
 	}
