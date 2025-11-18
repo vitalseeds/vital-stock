@@ -30,7 +30,15 @@ define('VS_LARGE_PACKET__NO_STOCK_AMOUNT', 5);
  */
 function vs_product_is_large_packet($product)
 {
-	return $product->get_type() == 'variation' && $product->get_attributes()["pa_size"] == "large";
+	if ($product->get_type() != 'variation') {
+		return false;
+	}
+
+	$attributes = $product->get_attributes();
+	if (is_array($attributes) && isset($attributes['pa_size'])) {
+		return $attributes["pa_size"] == "large";
+	}
+	return false;
 }
 
 /**
