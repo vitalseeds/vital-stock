@@ -2,109 +2,134 @@
 /**
  * Wholesale Coupon Auto-Apply
  *
- * Automatically applies and manages the 'wholesale' coupon for users with the BACS role.
+ * Automatically applies and manages wholesale coupons for users with wholesale roles.
  * Prevents removal and customizes minimum spend messages.
  */
 
-// Exit if accessed directly
-if (!defined('ABSPATH')) {
+// Exit if accessed directly.
+if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 /**
- * Automatically apply wholesale coupon for BACS users
- *
- * Applies the 'wholesale' coupon when BACS users view their cart or checkout.
- * Removes the coupon for non-BACS users if somehow applied.
+ * Wholesale tiers configuration
+ * Higher discount tiers should be listed first (checked in order)
  */
-function vs_auto_apply_wholesale_coupon()
-{
-	// Only run if WooCommerce is active and user is logged in
-	if (!function_exists('wc_current_user_has_role') || !is_user_logged_in()) {
+const VS_WHOLESALE_TIERS = [
+	'wholesale_33' => [
+		'coupon'   => 'wholesale-33',
+		'discount' => 33,
+	],
+	'wholesale_25' => [
+		'coupon'   => 'wholesale',
+		'discount' => 25,
+	],
+];
+
+/**
+ * Get the wholesale tier for the current user
+ *
+ * @return array|false Associative array with 'role', 'coupon', 'discount' keys, or false if not wholesale
+ */
+function vs_get_wholesale_tier_for_user() {
+	if ( ! function_exists( 'wc_current_user_has_role' ) || ! is_user_logged_in() ) {
+		return false;
+	}
+
+	foreach ( VS_WHOLESALE_TIERS as $role => $tier ) {
+		if ( wc_current_user_has_role( $role ) ) {
+			return array_merge( array( 'role' => $role ), $tier );
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Get all wholesale coupon codes
+ *
+ * @return array List of coupon codes
+ */
+function vs_get_wholesale_coupon_codes() {
+	return array_column( VS_WHOLESALE_TIERS, 'coupon' );
+}
+
+/**
+ * Automatically apply wholesale coupon for wholesale users
+ *
+ * Applies the appropriate wholesale coupon when wholesale users view their cart or checkout.
+ */
+function vs_auto_apply_wholesale_coupon() {
+	$tier = vs_get_wholesale_tier_for_user();
+
+	if ( ! $tier ) {
 		return;
 	}
 
-	// Check if user has BACS role
-	$is_bacs_user = wc_current_user_has_role('bacs');
-	$coupon_code = 'wholesale';
-
-	// Get applied coupons
 	$applied_coupons = WC()->cart->get_applied_coupons();
 
-	if ($is_bacs_user) {
-		// Apply coupon if not already applied
-		if (!in_array($coupon_code, $applied_coupons)) {
-			WC()->cart->apply_coupon($coupon_code);
-		}
+	if ( ! in_array( $tier['coupon'], $applied_coupons, true ) ) {
+		WC()->cart->apply_coupon( $tier['coupon'] );
 	}
 }
-add_action('woocommerce_before_cart', 'vs_auto_apply_wholesale_coupon');
-add_action('woocommerce_before_checkout_form', 'vs_auto_apply_wholesale_coupon');
+add_action( 'woocommerce_before_cart', 'vs_auto_apply_wholesale_coupon' );
+add_action( 'woocommerce_before_checkout_form', 'vs_auto_apply_wholesale_coupon' );
 
 /**
- * Prevent BACS users from manually removing the wholesale coupon
+ * Prevent wholesale users from manually removing their wholesale coupon
  *
- * If a BACS user tries to remove the wholesale coupon, it's immediately re-applied
- * and a notice is shown explaining it's automatically applied to their account.
+ * Re-applies the coupon and shows a notice explaining it is automatic.
  *
- * @param bool $removed Whether the coupon was removed
  * @param string $coupon_code The coupon code being removed
- * @return bool Modified removal status
  */
-function vs_prevent_wholesale_coupon_removal($removed, $coupon_code)
-{
-	if ($coupon_code === 'wholesale' && wc_current_user_has_role('bacs')) {
-		// Re-apply the coupon immediately
-		WC()->cart->apply_coupon($coupon_code);
-		wc_add_notice(__('The wholesale discount is automatically applied to your account.'), 'notice');
-		return false;
+function vs_prevent_wholesale_coupon_removal( $coupon_code ) {
+	$tier = vs_get_wholesale_tier_for_user();
+
+	if ( ! $tier || $coupon_code !== $tier['coupon'] ) {
+		return;
 	}
-	return $removed;
+
+	WC()->cart->apply_coupon( $coupon_code );
+	wc_add_notice( __( 'The wholesale discount is automatically applied to your account.', 'vital-stock' ), 'notice' );
 }
-add_filter('woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal', 10, 2);
+add_action( 'woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal' );
 
 /**
  * Customize the minimum spend error message for wholesale coupon
  *
- * Replaces the standard WooCommerce minimum spend error with a friendlier message
- * that shows how much more needs to be spent to activate the discount.
- * Only customizes the message if the user is actually eligible to use the coupon.
+ * Replaces "The minimum spend for coupon 'wholesale' is X" with a friendlier message
+ * showing how much more needs to be spent.
  *
- * Changes "The minimum spend for coupon 'wholesale' is £50" to:
- * "Wholesale coupon applied - spend £15.00 more for discount"
- *
- * @param string $error_message The original error message
- * @param int $error_code The error code
- * @param WC_Coupon $coupon The coupon object
+ * @param string    $error_message The original error message
+ * @param int       $error_code    The error code
+ * @param WC_Coupon $coupon        The coupon object
  * @return string Modified error message
  */
-function vs_customize_wholesale_minimum_spend_message($error_message, $error_code, $coupon)
-{
-	// Only customize for the wholesale coupon and minimum spend errors
-	if ($coupon->get_code() !== 'wholesale' || $error_code !== WC_Coupon::E_WC_COUPON_MIN_SPEND_LIMIT_NOT_MET) {
+function vs_customize_wholesale_minimum_spend_message( $error_message, $error_code, $coupon ) {
+	if ( $error_code !== WC_Coupon::E_WC_COUPON_MIN_SPEND_LIMIT_NOT_MET ) {
 		return $error_message;
 	}
 
-	// Check if user can actually use the wholesale coupon
-	if (!is_user_logged_in()) {
+	if ( ! in_array( $coupon->get_code(), vs_get_wholesale_coupon_codes(), true ) ) {
 		return $error_message;
 	}
 
-	$is_bacs_user = function_exists('wc_current_user_has_role') && wc_current_user_has_role('bacs');
+	if ( ! is_user_logged_in() ) {
+		return $error_message;
+	}
 
 	$minimum_spend = $coupon->get_minimum_amount();
-	$cart_total = WC()->cart->get_displayed_subtotal();
+	$cart_total    = WC()->cart->get_displayed_subtotal();
+	$remaining     = $minimum_spend - $cart_total;
 
-	// Calculate how much more is needed
-	$remaining = $minimum_spend - $cart_total;
-
-	if ($remaining > 0) {
-		return sprintf(
-			__('Wholesale coupon applied - spend %s more for discount', 'vital-stock'),
-			wc_price($remaining)
-		);
+	if ( $remaining <= 0 ) {
+		return $error_message;
 	}
 
-	return $error_message;
+	return sprintf(
+		/* translators: %s: amount remaining to spend */
+		__( 'Wholesale coupon applied - spend %s more for discount', 'vital-stock' ),
+		wc_price( $remaining )
+	);
 }
-add_filter('woocommerce_coupon_error', 'vs_customize_wholesale_minimum_spend_message', 10, 3);
+add_filter( 'woocommerce_coupon_error', 'vs_customize_wholesale_minimum_spend_message', 10, 3 );
