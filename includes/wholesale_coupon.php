@@ -95,41 +95,57 @@ function vs_prevent_wholesale_coupon_removal( $coupon_code ) {
 add_action( 'woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal' );
 
 /**
+ * Hide the coupon form for wholesale users
+ *
+ * Since wholesale coupons are auto-applied, the coupon form is unnecessary.
+ */
+function vs_hide_coupon_form_for_wholesale() {
+	if ( vs_get_wholesale_tier_for_user() ) {
+		remove_action( 'woocommerce_before_checkout_form', 'woocommerce_checkout_coupon_form', 10 );
+	}
+}
+add_action( 'woocommerce_before_checkout_form', 'vs_hide_coupon_form_for_wholesale', 5 );
+
+/**
  * Customize the minimum spend error message for wholesale coupon
  *
- * Replaces "The minimum spend for coupon 'wholesale' is X" with a friendlier message
- * showing how much more needs to be spent.
+ * Replaces the standard WooCommerce minimum spend error with a friendlier message
+ * that shows how much more needs to be spent to activate the discount.
+ * Only customizes the message if the user is actually eligible to use the coupon.
  *
- * @param string    $error_message The original error message
- * @param int       $error_code    The error code
- * @param WC_Coupon $coupon        The coupon object
+ * Changes "The minimum spend for coupon 'wholesale' is £50" to:
+ * "Wholesale coupon applied - spend £15.00 more for discount"
+ *
+ * @param string $error_message The original error message
+ * @param int $error_code The error code
+ * @param WC_Coupon $coupon The coupon object
  * @return string Modified error message
  */
-function vs_customize_wholesale_minimum_spend_message( $error_message, $error_code, $coupon ) {
-	if ( $error_code !== WC_Coupon::E_WC_COUPON_MIN_SPEND_LIMIT_NOT_MET ) {
+function vs_customize_wholesale_minimum_spend_message($error_message, $error_code, $coupon)
+{
+	// Only customize for wholesale coupons and minimum spend errors
+	if (!in_array($coupon->get_code(), vs_get_wholesale_coupon_codes()) || $error_code !== WC_Coupon::E_WC_COUPON_MIN_SPEND_LIMIT_NOT_MET) {
 		return $error_message;
 	}
 
-	if ( ! in_array( $coupon->get_code(), vs_get_wholesale_coupon_codes(), true ) ) {
-		return $error_message;
-	}
-
-	if ( ! is_user_logged_in() ) {
+	// Check if user can actually use the wholesale coupon
+	if (!is_user_logged_in()) {
 		return $error_message;
 	}
 
 	$minimum_spend = $coupon->get_minimum_amount();
-	$cart_total    = WC()->cart->get_displayed_subtotal();
-	$remaining     = $minimum_spend - $cart_total;
+	$cart_total = WC()->cart->get_displayed_subtotal();
 
-	if ( $remaining <= 0 ) {
-		return $error_message;
+	// Calculate how much more is needed
+	$remaining = $minimum_spend - $cart_total;
+
+	if ($remaining > 0) {
+		return sprintf(
+			__('Wholesale coupon applied - spend %s more for discount', 'vital-stock'),
+			wc_price($remaining)
+		);
 	}
 
-	return sprintf(
-		/* translators: %s: amount remaining to spend */
-		__( 'Wholesale coupon applied - spend %s more for discount', 'vital-stock' ),
-		wc_price( $remaining )
-	);
+	return $error_message;
 }
-add_filter( 'woocommerce_coupon_error', 'vs_customize_wholesale_minimum_spend_message', 10, 3 );
+add_filter('woocommerce_coupon_error', 'vs_customize_wholesale_minimum_spend_message', 10, 3);
