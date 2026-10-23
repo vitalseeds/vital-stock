@@ -73,7 +73,7 @@ function vs_auto_apply_wholesale_coupon() {
 	}
 }
 add_action( 'woocommerce_before_cart', 'vs_auto_apply_wholesale_coupon' );
-add_action( 'woocommerce_before_checkout_form', 'vs_auto_apply_wholesale_coupon' );
+add_action( 'woocommerce_before_checkout_form', 'vs_auto_apply_wholesale_coupon', 5 );
 
 /**
  * Prevent wholesale users from manually removing their wholesale coupon
@@ -95,25 +95,43 @@ function vs_prevent_wholesale_coupon_removal( $coupon_code ) {
 add_action( 'woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal' );
 
 /**
- * Reword the checkout coupon prompt for wholesale users
+ * Hide the separate "Have a coupon?" prompt while the wholesale banner is showing
  *
- * The wholesale coupon is auto-applied, so the standard "Have a coupon?" prompt
- * is reworded to make clear that any further coupon is an additional one. The
- * link keeps the showcoupon class so WooCommerce's checkout.js still toggles
- * the coupon form.
+ * Wholesale users keep WooCommerce's checkout coupon form so they can add further
+ * coupons. While their wholesale coupon is not yet applied (below the minimum
+ * spend) the wholesale banner carries an "(add another coupon)" link instead, so
+ * the standard prompt is hidden to save space. Once the wholesale coupon is
+ * applied there is no banner, so the standard prompt is shown.
  *
- * @param string $message The original prompt HTML
- * @return string Modified prompt HTML
+ * Runs after the auto-apply (priority 10) so the applied coupons are current.
  */
-function vs_wholesale_checkout_coupon_message( $message ) {
-	if ( ! vs_get_wholesale_tier_for_user() ) {
-		return $message;
+function vs_hide_coupon_prompt_while_wholesale_banner_shows() {
+	$tier = vs_get_wholesale_tier_for_user();
+
+	if ( ! $tier || WC()->cart->has_discount( $tier['coupon'] ) ) {
+		return;
 	}
 
-	return '<a href="#" role="button" aria-label="' . esc_attr__( 'Enter your coupon code', 'vital-stock' ) . '" aria-controls="woocommerce-checkout-form-coupon" aria-expanded="false" class="showcoupon">'
-		. esc_html__( 'Add another coupon', 'vital-stock' ) . '</a>';
+	echo '<style>.woocommerce-form-coupon-toggle{display:none}.vs-add-coupon-link{float:right;margin-left:1em}</style>';
 }
-add_filter( 'woocommerce_checkout_coupon_message', 'vs_wholesale_checkout_coupon_message' );
+add_action( 'woocommerce_before_checkout_form', 'vs_hide_coupon_prompt_while_wholesale_banner_shows', 20 );
+
+/**
+ * Show checkout notices above the coupon form for wholesale users
+ *
+ * WooCommerce prints the coupon form before the notices at the same priority, so
+ * the wholesale banner would sit below the coupon field. Move the notices to run
+ * after the auto-apply (priority 5) and before the coupon form (priority 10).
+ */
+function vs_move_checkout_notices_above_coupon_form() {
+	if ( ! vs_get_wholesale_tier_for_user() ) {
+		return;
+	}
+
+	remove_action( 'woocommerce_before_checkout_form', 'woocommerce_output_all_notices', 10 );
+	add_action( 'woocommerce_before_checkout_form', 'woocommerce_output_all_notices', 6 );
+}
+add_action( 'woocommerce_before_checkout_form', 'vs_move_checkout_notices_above_coupon_form', 4 );
 
 /**
  * Customize the minimum spend error message for wholesale coupon
@@ -149,10 +167,17 @@ function vs_customize_wholesale_minimum_spend_message($error_message, $error_cod
 	$remaining = $minimum_spend - $cart_total;
 
 	if ($remaining > 0) {
-		return sprintf(
+		$message = sprintf(
 			__('Wholesale coupon applied - spend %s more for discount', 'vital-stock'),
 			wc_price($remaining)
 		);
+
+		// The checkout coupon form is hidden until its toggle link is clicked.
+		if (is_checkout()) {
+			$message .= ' <a href="#" class="showcoupon vs-add-coupon-link">' . esc_html__('+ add another coupon', 'vital-stock') . '</a>';
+		}
+
+		return $message;
 	}
 
 	return $error_message;
