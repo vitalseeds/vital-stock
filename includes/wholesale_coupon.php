@@ -95,16 +95,25 @@ function vs_prevent_wholesale_coupon_removal( $coupon_code ) {
 add_action( 'woocommerce_removed_coupon', 'vs_prevent_wholesale_coupon_removal' );
 
 /**
- * Hide the coupon form for wholesale users
+ * Reword the checkout coupon prompt for wholesale users
  *
- * Since wholesale coupons are auto-applied, the coupon form is unnecessary.
+ * The wholesale coupon is auto-applied, so the standard "Have a coupon?" prompt
+ * is reworded to make clear that any further coupon is an additional one. The
+ * link keeps the showcoupon class so WooCommerce's checkout.js still toggles
+ * the coupon form.
+ *
+ * @param string $message The original prompt HTML
+ * @return string Modified prompt HTML
  */
-function vs_hide_coupon_form_for_wholesale() {
-	if ( vs_get_wholesale_tier_for_user() ) {
-		remove_action( 'woocommerce_before_checkout_form', 'woocommerce_checkout_coupon_form', 10 );
+function vs_wholesale_checkout_coupon_message( $message ) {
+	if ( ! vs_get_wholesale_tier_for_user() ) {
+		return $message;
 	}
+
+	return '<a href="#" role="button" aria-label="' . esc_attr__( 'Enter your coupon code', 'vital-stock' ) . '" aria-controls="woocommerce-checkout-form-coupon" aria-expanded="false" class="showcoupon">'
+		. esc_html__( 'Add another coupon', 'vital-stock' ) . '</a>';
 }
-add_action( 'woocommerce_before_checkout_form', 'vs_hide_coupon_form_for_wholesale', 5 );
+add_filter( 'woocommerce_checkout_coupon_message', 'vs_wholesale_checkout_coupon_message' );
 
 /**
  * Customize the minimum spend error message for wholesale coupon
